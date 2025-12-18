@@ -1,16 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useEffect, useState, useContext } from 'react';
+import { useEffect, useState, useContext, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import {
-  Container, Typography, Box, Grid, CircularProgress, Alert, Button, Dialog, DialogTitle,
-  DialogContent, DialogActions, TextField, MenuItem, Select, FormControl, InputLabel
+  Container, Typography, Box, CircularProgress, Alert, Button, Dialog, DialogTitle,
+  DialogContent, DialogActions, TextField
 } from '@mui/material';
 import { AuthContext } from '../App';
 import axios from 'axios';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import DoNotDisturbOnIcon from '@mui/icons-material/DoNotDisturbOn';
 import EventBusyIcon from '@mui/icons-material/EventBusy';
-import BlockIcon from '@mui/icons-material/Block';
 import DirectionsCarIcon from '@mui/icons-material/DirectionsCar';
 
 interface ParkingSpot {
@@ -49,14 +47,12 @@ function ParkingLotDetailsPage() {
   const [error, setError] = useState('');
   const [selectedSpot, setSelectedSpot] = useState<ParkingSpot | null>(null);
   const [openDialog, setOpenDialog] = useState(false);
-  const [newSpotNumber, setNewSpotNumber] = useState('');
-  const [isNewSpotHandicap, setIsNewSpotHandicap] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionSeverity, setActionSeverity] = useState<'success' | 'error' | 'info'>('info');
 
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
-  const fetchParkingLotDetails = async () => {
+  const fetchParkingLotDetails = useCallback(async () => {
     setLoading(true);
     setError('');
     setActionMessage(null);
@@ -74,13 +70,13 @@ function ParkingLotDetailsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [API_BASE_URL, auth?.token, id]);
 
   useEffect(() => {
     if (auth?.token && id) {
       fetchParkingLotDetails();
     }
-  }, [auth?.token, id, API_BASE_URL]);
+  }, [auth?.token, id, fetchParkingLotDetails]);
 
   const getSpotColor = (status: ParkingSpot['status']) => {
     switch (status) {
@@ -93,6 +89,8 @@ function ParkingLotDetailsPage() {
   };
 
   const handleSpotClick = (spot: ParkingSpot) => {
+    setStartSessionSpotId(null);
+    setStartSessionVehicle('');
     setSelectedSpot(spot);
     setOpenDialog(true);
   };
@@ -100,30 +98,8 @@ function ParkingLotDetailsPage() {
   const handleCloseDialog = () => {
     setOpenDialog(false);
     setSelectedSpot(null);
-    setNewSpotNumber('');
-    setIsNewSpotHandicap(false);
-  };
-
-  const handleAddSpot = async () => {
-    if (!newSpotNumber.trim()) {
-      setActionMessage('Spot number cannot be empty.');
-      setActionSeverity('error');
-      return;
-    }
-    try {
-      await axios.post(`${API_BASE_URL}/parking-spots/lot/${id}/spots`,
-        { spotNumber: newSpotNumber.toUpperCase(), isHandicap: isNewSpotHandicap },
-        { headers: { Authorization: `Bearer ${auth?.token}` } }
-      );
-      setActionMessage(`Spot ${newSpotNumber.toUpperCase()} added successfully!`);
-      setActionSeverity('success');
-      fetchParkingLotDetails();
-      handleCloseDialog();
-    } catch (err: any) {
-      console.error('Error adding spot:', err);
-      setActionMessage(err.response?.data?.message || 'Failed to add parking spot.');
-      setActionSeverity('error');
-    }
+    setStartSessionSpotId(null);
+    setStartSessionVehicle('');
   };
 
   const handleChangeSpotStatus = async (spotId: number, newStatus: ParkingSpot['status']) => {
@@ -165,10 +141,12 @@ function ParkingLotDetailsPage() {
     setStartSessionSpotId(spotId);
     setOpenDialog(true);
     setSelectedSpot(null);
+    setStartSessionVehicle('');
   };
 
   const handleStartSession = async () => {
-    if (!startSessionVehicle || !startSessionSpotId) {
+    const licensePlate = startSessionVehicle.trim().toUpperCase();
+    if (!licensePlate || !startSessionSpotId) {
       setActionMessage('Please enter a vehicle license plate and select a spot.');
       setActionSeverity('error');
       return;
@@ -176,14 +154,14 @@ function ParkingLotDetailsPage() {
     try {
       let vehicleId;
       try {
-        const vehicleRes = await axios.get(`${API_BASE_URL}/vehicles/${startSessionVehicle.toUpperCase()}`, {
+        const vehicleRes = await axios.get(`${API_BASE_URL}/vehicles/${encodeURIComponent(licensePlate)}`, {
           headers: { Authorization: `Bearer ${auth?.token}` }
         });
         vehicleId = vehicleRes.data.id;
       } catch (err: any) {
         if (err.response?.status === 404) {
           const newVehicleRes = await axios.post(`${API_BASE_URL}/vehicles`,
-            { licensePlate: startSessionVehicle.toUpperCase(), make: 'Unknown', model: 'Unknown' },
+            { licensePlate, make: 'Unknown', model: 'Unknown' },
             { headers: { Authorization: `Bearer ${auth?.token}` } }
           );
           vehicleId = newVehicleRes.data.id;
@@ -205,6 +183,22 @@ function ParkingLotDetailsPage() {
     } catch (err: any) {
       console.error('Error starting session:', err);
       setActionMessage(err.response?.data?.message || 'Failed to start parking session.');
+      setActionSeverity('error');
+    }
+  };
+
+  const handleDeleteSpot = async (spotId: number) => {
+    try {
+      await axios.delete(`${API_BASE_URL}/parking-spots/${spotId}`, {
+        headers: { Authorization: `Bearer ${auth?.token}` }
+      });
+      setActionMessage('Parking spot deleted.');
+      setActionSeverity('success');
+      fetchParkingLotDetails();
+      handleCloseDialog();
+    } catch (err: any) {
+      console.error('Error deleting spot:', err);
+      setActionMessage(err.response?.data?.message || 'Failed to delete parking spot.');
       setActionSeverity('error');
     }
   };
@@ -250,23 +244,23 @@ function ParkingLotDetailsPage() {
           <EventBusyIcon color="info" />
           <Typography>Reserved: {parkingLot.reservedSpotsCount}</Typography>
         </Box>
-        <Button
-          variant="contained"
-          onClick={() => {
-            setSelectedSpot(null);
-            setOpenDialog(true);
-          }}
-          sx={{ ml: 'auto' }}
-        >
-          Add New Spot
-        </Button>
       </Box>
 
-      <Grid container spacing={1}>
+      <Box
+        sx={{
+          display: 'grid',
+          gap: 1,
+          gridTemplateColumns: {
+            xs: 'repeat(3, minmax(0, 1fr))',
+            sm: 'repeat(4, minmax(0, 1fr))',
+            md: 'repeat(6, minmax(0, 1fr))'
+          }
+        }}
+      >
         {parkingLot.spots
           .sort((a, b) => a.spotNumber.localeCompare(b.spotNumber))
           .map((spot) => (
-            <Grid item xs={2} sm={1.5} md={1} key={spot.id}>
+            <Box key={spot.id}>
               <Button
                 variant="contained"
                 sx={{
@@ -277,12 +271,14 @@ function ParkingLotDetailsPage() {
                   justifyContent: 'center',
                   alignItems: 'center',
                   bgcolor: getSpotColor(spot.status),
+                  clipPath: 'polygon(15% 0, 85% 0, 100% 18%, 100% 82%, 85% 100%, 15% 100%, 0 82%, 0 18%)',
                   '&:hover': {
                     bgcolor: getSpotColor(spot.status),
                     opacity: 0.8
                   },
                   color: 'text.primary',
-                  borderRadius: 1,
+                  borderRadius: 0,
+                  boxShadow: 3,
                   p: 0.5,
                   fontSize: '0.7rem'
                 }}
@@ -303,9 +299,9 @@ function ParkingLotDetailsPage() {
                   </Typography>
                 )}
               </Button>
-            </Grid>
+            </Box>
           ))}
-      </Grid>
+      </Box>
 
       <Dialog open={openDialog} onClose={handleCloseDialog}>
         {selectedSpot ? (
@@ -345,12 +341,17 @@ function ParkingLotDetailsPage() {
                   Mark Unavailable
                 </Button>
               )}
+              {auth?.user?.role === 'admin' && (
+                <Button onClick={() => handleDeleteSpot(selectedSpot.id)} color="error">
+                  Delete Spot
+                </Button>
+              )}
               <Button onClick={handleCloseDialog}>Close</Button>
             </DialogActions>
           </>
         ) : (
           <>
-            <DialogTitle>{startSessionSpotId ? `Start Session for Spot ${parkingLot.spots.find(s => s.id === startSessionSpotId)?.spotNumber}` : 'Add New Parking Spot'}</DialogTitle>
+            <DialogTitle>{startSessionSpotId ? `Start Session for Spot ${parkingLot.spots.find(s => s.id === startSessionSpotId)?.spotNumber}` : 'Parking Spot'}</DialogTitle>
             <DialogContent>
               {startSessionSpotId ? (
                 <TextField
@@ -365,32 +366,7 @@ function ParkingLotDetailsPage() {
                   onChange={(e) => setStartSessionVehicle(e.target.value)}
                 />
               ) : (
-                <>
-                  <TextField
-                    autoFocus
-                    margin="dense"
-                    id="spotNumber"
-                    label="Spot Number (e.g., A1, B10)"
-                    type="text"
-                    fullWidth
-                    variant="standard"
-                    value={newSpotNumber}
-                    onChange={(e) => setNewSpotNumber(e.target.value)}
-                  />
-                  <FormControl fullWidth margin="dense">
-                    <InputLabel id="is-handicap-label">Handicap Spot?</InputLabel>
-                    <Select
-                      labelId="is-handicap-label"
-                      id="isHandicap"
-                      value={isNewSpotHandicap ? 'yes' : 'no'}
-                      label="Handicap Spot?"
-                      onChange={(e) => setIsNewSpotHandicap(e.target.value === 'yes')}
-                    >
-                      <MenuItem value="no">No</MenuItem>
-                      <MenuItem value="yes">Yes</MenuItem>
-                    </Select>
-                  </FormControl>
-                </>
+                <Typography variant="body2">Select a parking spot to view details.</Typography>
               )}
             </DialogContent>
             <DialogActions>
@@ -399,11 +375,7 @@ function ParkingLotDetailsPage() {
                 <Button onClick={handleStartSession} variant="contained" color="primary">
                   Start Session
                 </Button>
-              ) : (
-                <Button onClick={handleAddSpot} variant="contained" color="primary">
-                  Add Spot
-                </Button>
-              )}
+              ) : null}
             </DialogActions>
           </>
         )}

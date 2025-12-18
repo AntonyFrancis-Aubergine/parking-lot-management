@@ -33,7 +33,7 @@ app.use('/api/parking-sessions', parkingSessionRoutes);
 
 
 // Sync DB and Start Server
-db.sequelize.sync({ force: false }).then(() => {
+db.sequelize.sync({ alter: true }).then(() => {
   console.log('Database synced.');
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
